@@ -10,10 +10,10 @@ class ASR(nn.Module):
         self.feature_extractor_2 = FeatureExtractor()
         self.feature_extractor_3 = FeatureExtractor()
         self.feature_extractor_4 = FeatureExtractor()
-        self.fc1 = Classifier()
-        self.fc2 = Classifier()
-        self.fc3 = Classifier()
-        self.fc4 = Classifier()
+        self.fc1 = Classifier(512)
+        self.fc2 = Classifier(1024)
+        self.fc3 = Classifier(1408)
+        self.fc4 = Classifier(512)
         self.feature_fuser = FeatureFuser(in_channels=1536, out_channels=512, output_size=7)
         self.conv1x1 = nn.Conv2d(512 + 1024 + 1408, 512, kernel_size=1)
 
@@ -41,9 +41,9 @@ class ASR(nn.Module):
         aap_out_2 = aap(feature_2)
         aap_out_3 = aap(feature_3)
 
-        logits_1 = self.fc1(aap_out_1.view(-1, 512))
-        logits_2 = self.fc2(aap_out_2.view(-1, 512))
-        logits_3 = self.fc3(aap_out_3.view(-1, 512))
+        logits_1 = self.fc1(aap_out_1)
+        logits_2 = self.fc2(aap_out_2)
+        logits_3 = self.fc3(aap_out_3)
 
         # feature fuser
         feature_all = torch.cat((feature_1, feature_2, feature_3), dim=1)
@@ -52,7 +52,7 @@ class ASR(nn.Module):
 
         aap_out_4 = aap(feature_fused)
 
-        logits_4 = self.fc4(aap_out_4.view(-1, 512))
+        logits_4 = self.fc4(aap_out_4)
 
         return logits_1, logits_2, logits_3, logits_4
 
@@ -88,9 +88,9 @@ class FeatureFuser(nn.Module):
         return f
 
 class Classifier(nn.Module):
-    def __init__(self):
+    def __init__(self, in_channels, num_classes=2):
         super(Classifier, self).__init__()
-        self.fc = nn.Linear(512, 5)
+        self.fc = nn.Linear(in_channels, num_classes)
     
     def forward(self, x):
         logits = self.fc(x)

@@ -8,29 +8,26 @@ from torchvision import transforms
 from preprocess import preprocess_data
 from model import ASR, aap, feature_max
 import os
+from sklearn.metrics import accuracy_score, roc_auc_score
 
-def loss_function(x, k, p, single, total, alpha=1.0):
-    m, _ = x.shape
+def loss_function(output, target, loss_fuc=None):
+    m = output.shape[0]  # 样本数量
+    num_classes = output.shape[1]  # 类别数量
+
+    beta = num_classes / m
     
-    # Equation (8): Calculate beta_k
-    beta_k = single / total
+    # 计算 p(k|xi),即模型预测的概率
+    p_k_xi = torch.softmax(output, dim=1)
     
-    # Equation (6): Calculate L_OC
-    I_ti_eq_k = (k.view(1, -1) == torch.arange(3).view(-1, 1)).float()
-    log_p_k_xi = torch.log(p(k, x))
-    log_1_minus_p_k_xi = torch.log(1 - p(k, x))
-    L_OC = -1/m * torch.sum(I_ti_eq_k * beta_k * log_p_k_xi + (1 - I_ti_eq_k) * log_1_minus_p_k_xi)
+    # 创建 I(ti = k) 的掩码矩阵
+    mask = torch.zeros_like(output)
+    mask[torch.arange(m), target] = 1
     
-    # Equation (7): Calculate L_i
-    L_i = torch.empty(3)
-    for i in range(3):
-        I_ti_eq_k_i = I_ti_eq_k[i]
-        log_p_k_xi_i = log_p_k_xi[:, i]
-        log_1_minus_p_k_xi_i = log_1_minus_p_k_xi[:, i]
-        L_i[i] = -1/m * torch.sum(I_ti_eq_k_i * log_p_k_xi_i + (1 - I_ti_eq_k_i) * log_1_minus_p_k_xi_i)
-    
-    # Equation (5): Calculate the total loss L
-    L = alpha * L_OC + torch.sum(L_i)
+    # 计算 L_OC
+    if loss_fuc == 'oc':
+        L = -1/m * torch.sum(mask * beta * torch.log(p_k_xi) + (1 - mask) * torch.log(1 - p_k_xi))
+    else:
+        L = -1/m * torch.sum(mask * torch.log(p_k_xi) + (1 - mask) * torch.log(1 - p_k_xi))
     
     return L
 
@@ -57,19 +54,23 @@ def main(args):
     dataset = CrohnsDataset(data_dir=args.data_dir, transform=data_transforms)
 
     # 创建数据加载器
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, drop_last=True)
 
     # 创建模型实例
     model = ASR()
 
     # 定义损失函数和优化器
-    criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+
+    alpha = 0.25
+    gamma = 0.25
 
     # 训练模型
     for epoch in range(args.num_epochs):
         model.train()
         running_loss = 0.0
+        all_labels = []
+        all_outputs = []
         for images, labels in dataloader:
             # 确保输入的图像维度为 (batch_size, 12, channels, height, width)
             assert images.shape[:2] == (args.batch_size, 12)
@@ -81,19 +82,29 @@ def main(args):
 
             # 对每个图像组进行处理
             output_1, output_2, output_3, output_4 = model(image_groups)
-            loss_1 = criterion(output_1, labels)
-            loss_2 = criterion(output_2, labels)
-            loss_3 = criterion(output_3, labels)
-            loss_4 = criterion(output_4, labels)
+            loss_1 = loss_function(output_1, labels)
+            loss_2 = loss_function(output_2, labels)
+            loss_3 = loss_function(output_3, labels)
+            loss_4 = loss_function(output_4, labels, 'oc')
 
-            loss = loss_1 + loss_2 + loss_3 + loss_4
+            loss = alpha * loss_4 + gamma * (loss_1 + loss_2 + loss_3)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
+
+            # 记录标签和输出用于计算准确率和AUC
+            all_labels.extend(labels.cpu().numpy())
+            all_outputs.extend(output_4.detach().cpu().numpy())
         
-        print(f'Epoch [{epoch+1}/{args.num_epochs}], Loss: {running_loss/(len(dataloader)*4):.4f}')
+        # 计算准确率和AUC
+        all_outputs = torch.tensor(all_outputs)
+        _, predicted = torch.max(all_outputs, 1)
+        accuracy = accuracy_score(all_labels, predicted.cpu().numpy())
+        auc = roc_auc_score(all_labels, all_outputs[:, 1].cpu().numpy())
+
+        print(f'Epoch [{epoch+1}/{args.num_epochs}], Loss: {running_loss/(len(dataloader)*4):.4f}, Accuracy: {accuracy:.4f}, AUC: {auc:.4f}')
 
 if __name__ == '__main__':
     args = parse_args()
