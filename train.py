@@ -9,6 +9,31 @@ from preprocess import preprocess_data
 from model import ASR, aap, feature_max
 import os
 
+def loss_function(x, k, p, single, total, alpha=1.0):
+    m, _ = x.shape
+    
+    # Equation (8): Calculate beta_k
+    beta_k = single / total
+    
+    # Equation (6): Calculate L_OC
+    I_ti_eq_k = (k.view(1, -1) == torch.arange(3).view(-1, 1)).float()
+    log_p_k_xi = torch.log(p(k, x))
+    log_1_minus_p_k_xi = torch.log(1 - p(k, x))
+    L_OC = -1/m * torch.sum(I_ti_eq_k * beta_k * log_p_k_xi + (1 - I_ti_eq_k) * log_1_minus_p_k_xi)
+    
+    # Equation (7): Calculate L_i
+    L_i = torch.empty(3)
+    for i in range(3):
+        I_ti_eq_k_i = I_ti_eq_k[i]
+        log_p_k_xi_i = log_p_k_xi[:, i]
+        log_1_minus_p_k_xi_i = log_1_minus_p_k_xi[:, i]
+        L_i[i] = -1/m * torch.sum(I_ti_eq_k_i * log_p_k_xi_i + (1 - I_ti_eq_k_i) * log_1_minus_p_k_xi_i)
+    
+    # Equation (5): Calculate the total loss L
+    L = alpha * L_OC + torch.sum(L_i)
+    
+    return L
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Crohn\'s Disease Classification')
     parser.add_argument('--data_dir', type=str, default='data_processed', help='Directory containing the dataset')
