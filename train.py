@@ -10,6 +10,9 @@ from model import ASR, aap, feature_max
 import os
 from sklearn.metrics import accuracy_score, roc_auc_score
 
+# 检查是否有可用的GPU设备
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 def loss_function(output, target, loss_fuc=None):
     m = output.shape[0]  # 样本数量
     num_classes = output.shape[1]  # 类别数量
@@ -35,7 +38,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Crohn\'s Disease Classification')
     parser.add_argument('--data_dir', type=str, default='data_processed', help='Directory containing the dataset')
     parser.add_argument('--batch_size', type=int, default=8, help='Batch size for training (should be 1 for patient-wise input)')
-    parser.add_argument('--num_epochs', type=int, default=10, help='Number of epochs to train')
+    parser.add_argument('--num_epochs', type=int, default=100, help='Number of epochs to train')
     parser.add_argument('--learning_rate', type=float, default=0.001, help='Learning rate for optimizer')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of worker threads for data loading')
     parser.add_argument('--model_path', type=str, default='model.pth', help='Path to save the trained model')
@@ -56,8 +59,8 @@ def main(args):
     # 创建数据加载器
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, drop_last=True)
 
-    # 创建模型实例
-    model = ASR()
+    # 创建模型实例并将其移动到GPU上
+    model = ASR().to(device)
 
     # 定义损失函数和优化器
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
@@ -72,6 +75,10 @@ def main(args):
         all_labels = []
         all_outputs = []
         for images, labels in dataloader:
+            # 将数据移动到GPU上
+            images = images.to(device)
+            labels = labels.to(device)
+            
             # 确保输入的图像维度为 (batch_size, 12, channels, height, width)
             assert images.shape[:2] == (args.batch_size, 12)
             
